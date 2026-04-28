@@ -21,16 +21,18 @@ export interface PersonResult {
 export async function processTransfer(row: OkkRow, token: string): Promise<PersonResult> {
   const steps: StepLog[] = []
   let hasError = false
+  let wasRemoved = false
 
   // 1. Remove from old deal
   try {
     const r = await removeFromDeal(row.oldDealId, row.personId, token)
     if (r === 'removed') {
+      wasRemoved = true
       steps.push({ ok: true, msg: `Removido do card "${row.oldCompany}" (deal ${row.oldDealId})` })
-    } else if (r === 'not_in_deal' || r.startsWith('not_in_deal')) {
-      steps.push({ ok: true, msg: `Pessoa não encontrada no deal — ${r}` })
+    } else if (r.startsWith('not_in_deal')) {
+      steps.push({ ok: true, msg: `Pessoa já não estava no card "${row.oldCompany}" — ok, continuando` })
     } else {
-      steps.push({ ok: false, msg: `Deal antigo ${row.oldDealId} não encontrado no Pipedrive` })
+      steps.push({ ok: false, msg: r })
       hasError = true
     }
   } catch (e: unknown) {
@@ -38,7 +40,22 @@ export async function processTransfer(row: OkkRow, token: string): Promise<Perso
     hasError = true
   }
 
-  // 2. Update person data (email always sent — empty clears it)
+  // 2. Note on old deal
+  if (wasRemoved) {
+    try {
+      const today = new Date().toLocaleDateString('pt-BR')
+      const note = `<b>👋 Pessoa removida do card</b><br><br>` +
+        `<b>${row.name}</b> mudou de emprego.<br>` +
+        `<b>Data:</b> ${today}`
+      await createNote(row.oldDealId, note, token)
+      steps.push({ ok: true, msg: `Anotação de remoção criada no card "${row.oldCompany}"` })
+    } catch (e: unknown) {
+      steps.push({ ok: false, msg: `Erro ao criar anotação no deal antigo: ${e instanceof Error ? e.message : e}` })
+      hasError = true
+    }
+  }
+
+  // 3. Update person data
   try {
     await updatePerson(
       row.personId,
@@ -52,7 +69,7 @@ export async function processTransfer(row: OkkRow, token: string): Promise<Perso
     hasError = true
   }
 
-  // 3. Add to new deal
+  // 4. Add to new deal
   try {
     await addToDeal(row.newDealId, row.personId, token)
     steps.push({ ok: true, msg: `Adicionado ao card "${row.newCompany}" (deal ${row.newDealId})` })
@@ -61,14 +78,14 @@ export async function processTransfer(row: OkkRow, token: string): Promise<Perso
     hasError = true
   }
 
-  // 4. Note on new deal
+  // 5. Note on new deal
   try {
     const today = new Date().toLocaleDateString('pt-BR')
     const note = buildTransferNote(row, today)
     await createNote(row.newDealId, note, token)
     steps.push({ ok: true, msg: `Anotação criada no card "${row.newCompany}"` })
   } catch (e: unknown) {
-    steps.push({ ok: false, msg: `Erro ao criar anotação: ${e instanceof Error ? e.message : e}` })
+    steps.push({ ok: false, msg: `Erro ao criar anotação no deal novo: ${e instanceof Error ? e.message : e}` })
     hasError = true
   }
 
@@ -96,10 +113,10 @@ export async function processRemoveOnly(row: RemoveOnlyRow, token: string): Prom
     if (r === 'removed') {
       wasRemoved = true
       steps.push({ ok: true, msg: `Removido do card "${row.oldCompany}" (deal ${row.oldDealId})` })
-    } else if (r === 'not_in_deal' || r.startsWith('not_in_deal')) {
-      steps.push({ ok: true, msg: `Pessoa não encontrada no deal — ${r}` })
+    } else if (r.startsWith('not_in_deal')) {
+      steps.push({ ok: true, msg: `Pessoa já não estava no card "${row.oldCompany}" — nenhuma ação necessária` })
     } else {
-      steps.push({ ok: false, msg: `Deal ${row.oldDealId} não encontrado no Pipedrive` })
+      steps.push({ ok: false, msg: r })
       hasError = true
     }
   } catch (e: unknown) {
@@ -112,8 +129,7 @@ export async function processRemoveOnly(row: RemoveOnlyRow, token: string): Prom
     try {
       const today = new Date().toLocaleDateString('pt-BR')
       const note = `<b>👋 Pessoa removida do card</b><br><br>` +
-        `<b>${row.name}</b> foi removida pois mudou de emprego.<br>` +
-        `<b>Empresa anterior:</b> ${row.oldCompany}<br>` +
+        `<b>${row.name}</b> mudou de emprego.<br>` +
         `<b>Data:</b> ${today}`
       await createNote(row.oldDealId, note, token)
       steps.push({ ok: true, msg: `Anotação de remoção criada no card "${row.oldCompany}"` })
@@ -133,7 +149,7 @@ export async function processRemoveOnly(row: RemoveOnlyRow, token: string): Prom
   }
 }
 
-// ── Note template (transfer) ──────────────────────────────────────────────
+// ── Note template (transfer — new deal) ──────────────────────────────────
 
 function buildTransferNote(row: OkkRow, date: string): string {
   return `<b>🔄 Mudança de Emprego Detectada</b><br><br>` +
@@ -142,5 +158,5 @@ function buildTransferNote(row: OkkRow, date: string): string {
     `<b>Foi para:</b> ${row.newCompany}<br>` +
     `<b>Novo cargo:</b> ${row.newTitle || '—'}<br>` +
     (row.linkedinUrl ? `<b>LinkedIn:</b> <a href="${row.linkedinUrl}">${row.linkedinUrl}</a><br>` : '') +
-    `<b>Atualizado em:</b> ${date}`
+    `<b>Data:</b> ${date}`
 }
