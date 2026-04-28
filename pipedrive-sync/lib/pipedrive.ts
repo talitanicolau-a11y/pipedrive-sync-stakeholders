@@ -33,16 +33,11 @@ async function getDeal(dealId: number, token: string): Promise<DealData | null> 
   return json?.data ?? null
 }
 
-/**
- * Removes person from deal in both places:
- * 1. Participants list
- * 2. Primary contact (person_id) — sets to null if it matches
- */
 export async function removeFromDeal(
   dealId: number,
   personId: number,
   token: string
-): Promise<'removed' | 'not_in_deal' | 'deal_not_found'> {
+): Promise<'removed' | 'not_in_deal' | 'deal_not_found' | string> {
   let deal: DealData | null
   let participants: Participant[]
 
@@ -59,30 +54,37 @@ export async function removeFromDeal(
 
   if (!deal) return 'deal_not_found'
 
+  // Force both sides to number for safe comparison
+  const pid = Number(personId)
   let found = false
 
   // 1. Remove from participants list
-  const participant = participants.find((x) => x.person_id === personId)
+  const participant = participants.find((x) => Number(x.person_id) === pid)
   if (participant) {
     found = true
     await pd(`/deals/${dealId}/participants/${participant.id}`, 'DELETE', token)
   }
 
-  // 2. Remove as primary contact if matches
-  const primaryId = deal.person_id?.value ?? null
-  if (primaryId === personId) {
+  // 2. Remove as primary contact
+  const primaryId = deal.person_id?.value != null ? Number(deal.person_id.value) : null
+  if (primaryId === pid) {
     found = true
     await pd(`/deals/${dealId}`, 'PATCH', token, { person_id: null })
   }
 
-  return found ? 'removed' : 'not_in_deal'
+  // Debug info returned in the 'not_in_deal' case so it shows in the UI
+  if (!found) {
+    const participantIds = participants.map((x) => Number(x.person_id))
+    return `not_in_deal — buscado: ${pid}, participantes no deal: [${participantIds.join(', ')}], contato principal: ${primaryId}`
+  }
+
+  return 'removed'
 }
 
 export async function addToDeal(dealId: number, personId: number, token: string): Promise<void> {
   await pd(`/deals/${dealId}/participants`, 'POST', token, { person_id: personId })
 }
 
-// email always sent: empty string = clear, value = set
 export async function updatePerson(
   personId: number,
   fields: { email: string; job_title?: string; org_id?: number },
