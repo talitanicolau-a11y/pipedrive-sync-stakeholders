@@ -20,35 +20,62 @@ async function pd(
   return json
 }
 
-interface Participant {
-  id: number
-  person_id: number
-}
+interface Participant { id: number; person_id: number }
+interface DealData { id: number; person_id?: { value: number } | null }
 
 async function getDealParticipants(dealId: number, token: string): Promise<Participant[]> {
-  const json = (await pd(`/deals/${dealId}/participants?limit=500`, 'GET', token)) as {
-    data?: Participant[]
-  }
+  const json = (await pd(`/deals/${dealId}/participants?limit=500`, 'GET', token)) as { data?: Participant[] }
   return json?.data ?? []
 }
 
+async function getDeal(dealId: number, token: string): Promise<DealData | null> {
+  const json = (await pd(`/deals/${dealId}`, 'GET', token)) as { data?: DealData }
+  return json?.data ?? null
+}
+
+/**
+ * Removes person from deal in both places:
+ * 1. Participants list
+ * 2. Primary contact (person_id) — sets to null if it matches
+ */
 export async function removeFromDeal(
   dealId: number,
   personId: number,
   token: string
 ): Promise<'removed' | 'not_in_deal' | 'deal_not_found'> {
+  let deal: DealData | null
   let participants: Participant[]
+
   try {
-    participants = await getDealParticipants(dealId, token)
+    ;[deal, participants] = await Promise.all([
+      getDeal(dealId, token),
+      getDealParticipants(dealId, token),
+    ])
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     if (msg.includes('404')) return 'deal_not_found'
     throw e
   }
-  const p = participants.find((x) => x.person_id === personId)
-  if (!p) return 'not_in_deal'
-  await pd(`/deals/${dealId}/participants/${p.id}`, 'DELETE', token)
-  return 'removed'
+
+  if (!deal) return 'deal_not_found'
+
+  let found = false
+
+  // 1. Remove from participants list
+  const participant = participants.find((x) => x.person_id === personId)
+  if (participant) {
+    found = true
+    await pd(`/deals/${dealId}/participants/${participant.id}`, 'DELETE', token)
+  }
+
+  // 2. Remove as primary contact if matches
+  const primaryId = deal.person_id?.value ?? null
+  if (primaryId === personId) {
+    found = true
+    await pd(`/deals/${dealId}`, 'PATCH', token, { person_id: null })
+  }
+
+  return found ? 'removed' : 'not_in_deal'
 }
 
 export async function addToDeal(dealId: number, personId: number, token: string): Promise<void> {
