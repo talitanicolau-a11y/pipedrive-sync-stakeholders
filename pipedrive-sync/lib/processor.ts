@@ -40,19 +40,17 @@ export async function processTransfer(row: OkkRow, token: string): Promise<Perso
     hasError = true
   }
 
-  // 2. Note on old deal
-  if (wasRemoved) {
-    try {
-      const today = new Date().toLocaleDateString('pt-BR')
-      const note = `<b>👋 Pessoa removida do card</b><br><br>` +
-        `<b>${row.name}</b> mudou de emprego.<br>` +
-        `<b>Data:</b> ${today}`
-      await createNote(row.oldDealId, note, token)
-      steps.push({ ok: true, msg: `Anotação de remoção criada no card "${row.oldCompany}"` })
-    } catch (e: unknown) {
-      steps.push({ ok: false, msg: `Erro ao criar anotação no deal antigo: ${e instanceof Error ? e.message : e}` })
-      hasError = true
-    }
+  // 2. Note on old deal — always create
+  try {
+    const today = new Date().toLocaleDateString('pt-BR')
+    const note = `<b>👋 Pessoa removida do card</b><br><br>` +
+      `<b>${row.name}</b> mudou de emprego.<br>` +
+      `<b>Data:</b> ${today}`
+    await createNote(row.oldDealId, note, token)
+    steps.push({ ok: true, msg: `Anotação de remoção criada no card "${row.oldCompany}"` })
+  } catch (e: unknown) {
+    steps.push({ ok: false, msg: `Erro ao criar anotação no deal antigo: ${e instanceof Error ? e.message : e}` })
+    hasError = true
   }
 
   // 3. Update person data
