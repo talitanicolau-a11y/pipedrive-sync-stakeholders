@@ -27,8 +27,8 @@ export async function processTransfer(row: OkkRow, token: string): Promise<Perso
     const r = await removeFromDeal(row.oldDealId, row.personId, token)
     if (r === 'removed') {
       steps.push({ ok: true, msg: `Removido do card "${row.oldCompany}" (deal ${row.oldDealId})` })
-    } else if (r === 'not_in_deal') {
-      steps.push({ ok: true, msg: `Pessoa já não estava no card "${row.oldCompany}" — ok, continuando` })
+    } else if (r === 'not_in_deal' || r.startsWith('not_in_deal')) {
+      steps.push({ ok: true, msg: `Pessoa não encontrada no deal — ${r}` })
     } else {
       steps.push({ ok: false, msg: `Deal antigo ${row.oldDealId} não encontrado no Pipedrive` })
       hasError = true
@@ -96,8 +96,8 @@ export async function processRemoveOnly(row: RemoveOnlyRow, token: string): Prom
     if (r === 'removed') {
       wasRemoved = true
       steps.push({ ok: true, msg: `Removido do card "${row.oldCompany}" (deal ${row.oldDealId})` })
-    } else if (r === 'not_in_deal') {
-      steps.push({ ok: true, msg: `Pessoa já não estava no card "${row.oldCompany}" — nenhuma ação necessária` })
+    } else if (r === 'not_in_deal' || r.startsWith('not_in_deal')) {
+      steps.push({ ok: true, msg: `Pessoa não encontrada no deal — ${r}` })
     } else {
       steps.push({ ok: false, msg: `Deal ${row.oldDealId} não encontrado no Pipedrive` })
       hasError = true
