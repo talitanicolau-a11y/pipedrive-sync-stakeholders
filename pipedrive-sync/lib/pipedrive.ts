@@ -14,7 +14,8 @@ async function pd(
     body: body ? JSON.stringify(body) : undefined,
   })
   const json = await res.json()
-  if (!res.ok && res.status !== 404) {
+  // Return the json even on 404 — caller decides what to do
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
     throw new Error(json?.error || `Pipedrive ${res.status} ${path}`)
   }
   return json
@@ -24,15 +25,21 @@ interface Participant { id: number; person_id: number }
 interface DealData { id: number; person_id?: { value: number } | null }
 
 async function getDealParticipants(dealId: number, token: string): Promise<Participant[]> {
-  const json = (await pd(`/deals/${dealId}/participants?limit=500`, 'GET', token)) as { data?: Participant[] }
-  return json?.data ?? []
+  const json = (await pd(`/deals/${dealId}/participants?limit=500`, 'GET', token)) as { data?: Participant[]; success?: boolean }
+  if (!json || !(json as { success?: boolean }).success) return []
+  return (json as { data?: Participant[] }).data ?? []
 }
 
 async function getDeal(dealId: number, token: string): Promise<DealData | null> {
-  const json = (await pd(`/deals/${dealId}`, 'GET', token)) as { data?: DealData }
-  return json?.data ?? null
+  const json = (await pd(`/deals/${dealId}`, 'GET', token)) as { data?: DealData; success?: boolean }
+  if (!json || !(json as { success?: boolean }).success) return null
+  return (json as { data?: DealData }).data ?? null
 }
 
+/**
+ * Removes person from deal — checks both participants and primary contact.
+ * Works regardless of deal status (open, lost, won).
+ */
 export async function removeFromDeal(
   dealId: number,
   personId: number,
@@ -47,14 +54,13 @@ export async function removeFromDeal(
       getDealParticipants(dealId, token),
     ])
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e)
-    if (msg.includes('404')) return 'deal_not_found'
     throw e
   }
 
-  if (!deal) return 'deal_not_found'
+  if (!deal) {
+    return `deal_not_found — deal ${dealId} não retornou dados válidos da API`
+  }
 
-  // Force both sides to number for safe comparison
   const pid = Number(personId)
   let found = false
 
@@ -65,17 +71,16 @@ export async function removeFromDeal(
     await pd(`/deals/${dealId}/participants/${participant.id}`, 'DELETE', token)
   }
 
-  // 2. Remove as primary contact
+  // 2. Remove as primary contact if matches
   const primaryId = deal.person_id?.value != null ? Number(deal.person_id.value) : null
   if (primaryId === pid) {
     found = true
     await pd(`/deals/${dealId}`, 'PATCH', token, { person_id: null })
   }
 
-  // Debug info returned in the 'not_in_deal' case so it shows in the UI
   if (!found) {
     const participantIds = participants.map((x) => Number(x.person_id))
-    return `not_in_deal — buscado: ${pid}, participantes no deal: [${participantIds.join(', ')}], contato principal: ${primaryId}`
+    return `not_in_deal — buscado person_id: ${pid} | participantes no deal: [${participantIds.join(', ') || 'nenhum'}] | contato principal: ${primaryId ?? 'nenhum'}`
   }
 
   return 'removed'
